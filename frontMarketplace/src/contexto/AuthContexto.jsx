@@ -10,7 +10,7 @@ export function AuthProvider({ children }) {
   const [usuario, setUsuario] = useState(null);
   const [cargando, setCargando] = useState(true);
 
-  // Al cargar la app, revisar si hay sesión guardada
+
   useEffect(() => {
     const guardado = localStorage.getItem('freerueda_usuario');
     if (guardado) {

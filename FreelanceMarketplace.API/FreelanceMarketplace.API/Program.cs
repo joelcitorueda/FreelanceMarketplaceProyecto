@@ -21,7 +21,7 @@ var builder = WebApplication.CreateSlimBuilder(args);
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
     ?? "Server=DESKTOP-EROEUF5\\SQLEXPRESS;Database=Marketplace;Trusted_Connection=True;TrustServerCertificate=True;";
 
-// Registrar el contexto de base de datos con el proveedor de SQL Server
+// Registrar el contexto de base de datos con SQL Server
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
     options.UseSqlServer(connectionString));
 
@@ -55,20 +55,19 @@ using (var scope = app.Services.CreateScope())
     context.Database.EnsureCreated();
 }
 
-// 3. HABILITAR CORS PARA EL FRONTEND REACT
+// 3. HABILITAR CORS
 app.UseCors("PermitirFrontend");
 
 // 4. REGISTRAR MIDDLEWARE GLOBAL DE EXCEPCIONES
 app.UseMiddleware<ExceptionMiddleware>();
 
 // =====================================================
-// 5. ENDPOINTS DE AUTENTICACIÓN (Registro e Inicio de Sesión)
+// 5. ENDPOINTS DE AUTENTICACIÓN
 // =====================================================
 
 // Registrar un nuevo usuario (Desarrollador o Cliente)
 app.MapPost("/api/auth/register", async (User nuevoUsuario, IGenericRepository<User> repoUsuarios) =>
 {
-    // Validar campos requeridos
     if (string.IsNullOrWhiteSpace(nuevoUsuario.Name))
         return Results.BadRequest(ApiResponse.Fail("El nombre es obligatorio."));
     if (string.IsNullOrWhiteSpace(nuevoUsuario.Email))
@@ -78,19 +77,15 @@ app.MapPost("/api/auth/register", async (User nuevoUsuario, IGenericRepository<U
     if (nuevoUsuario.Role != "Freelancer" && nuevoUsuario.Role != "Client")
         return Results.BadRequest(ApiResponse.Fail("El rol debe ser 'Freelancer' o 'Client'."));
 
-    // Verificar si el correo ya existe
     var usuarios = await repoUsuarios.GetAllAsync();
     if (usuarios.Any(u => u.Email.ToLower() == nuevoUsuario.Email.ToLower()))
         return Results.BadRequest(ApiResponse.Fail("Ya existe una cuenta con ese correo electrónico."));
 
-    // Crear usuario con valores predeterminados
     nuevoUsuario.IsActive = true;
     nuevoUsuario.ProfileCompleted = true;
     nuevoUsuario.Rating = 5.0;
-
     await repoUsuarios.AddAsync(nuevoUsuario);
 
-    // Devolver usuario sin contraseña
     nuevoUsuario.Password = "";
     return Results.Ok(ApiResponse.Ok(nuevoUsuario, "¡Cuenta creada exitosamente! Ya puedes iniciar sesión."));
 });
@@ -108,17 +103,11 @@ app.MapPost("/api/auth/login", async (User loginData, IGenericRepository<User> r
     if (usuario == null)
         return Results.BadRequest(ApiResponse.Fail("Correo o contraseña incorrectos."));
 
-    // Devolver usuario sin contraseña
     var respuesta = new User
     {
-        Id = usuario.Id,
-        Name = usuario.Name,
-        Email = usuario.Email,
-        Password = "", // No enviar contraseña al frontend
-        Role = usuario.Role,
-        Rating = usuario.Rating,
-        IsActive = usuario.IsActive,
-        ProfileCompleted = usuario.ProfileCompleted
+        Id = usuario.Id, Name = usuario.Name, Email = usuario.Email,
+        Password = "", Role = usuario.Role, Rating = usuario.Rating,
+        IsActive = usuario.IsActive, ProfileCompleted = usuario.ProfileCompleted
     };
 
     return Results.Ok(ApiResponse.Ok(respuesta, $"¡Bienvenido {usuario.Name}!"));
@@ -128,17 +117,22 @@ app.MapPost("/api/auth/login", async (User loginData, IGenericRepository<User> r
 // 6. ENDPOINTS DE SERVICIOS
 // =====================================================
 
-// Obtener todos los servicios publicados
-app.MapGet("/api/services", async (IGenericRepository<FreelanceService> repo) =>
+// Obtener todos los servicios publicados (incluye módulos de cada uno)
+app.MapGet("/api/services", async (IGenericRepository<FreelanceService> repoServicios, IGenericRepository<Modulo> repoModulos) =>
 {
-    var servicios = await repo.GetAllAsync();
+    var servicios = (await repoServicios.GetAllAsync()).ToList();
+    var todosModulos = (await repoModulos.GetAllAsync()).ToList();
+
+    // Asignar módulos a cada servicio
+    foreach (var servicio in servicios)
+        servicio.Modulos = todosModulos.Where(m => m.ServiceId == servicio.Id).ToList();
+
     return Results.Ok(ApiResponse.Ok(servicios, "Servicios obtenidos exitosamente."));
 });
 
 // Crear/publicar un nuevo servicio (solo desarrolladores)
 app.MapPost("/api/services", async (FreelanceService nuevoServicio, IGenericRepository<FreelanceService> repoServicios, IGenericRepository<User> repoUsuarios) =>
 {
-    // Validar campos requeridos
     if (string.IsNullOrWhiteSpace(nuevoServicio.Title))
         return Results.BadRequest(ApiResponse.Fail("El título del servicio es obligatorio."));
     if (string.IsNullOrWhiteSpace(nuevoServicio.Description))
@@ -148,7 +142,6 @@ app.MapPost("/api/services", async (FreelanceService nuevoServicio, IGenericRepo
     if (string.IsNullOrWhiteSpace(nuevoServicio.Category))
         return Results.BadRequest(ApiResponse.Fail("La categoría es obligatoria."));
 
-    // Verificar que el usuario sea un desarrollador
     var desarrollador = await repoUsuarios.GetByIdAsync(nuevoServicio.FreelancerId);
     if (desarrollador == null)
         return Results.BadRequest(ApiResponse.Fail("El desarrollador no existe."));
@@ -160,7 +153,52 @@ app.MapPost("/api/services", async (FreelanceService nuevoServicio, IGenericRepo
 });
 
 // =====================================================
-// 7. ENDPOINTS DE PROPUESTAS
+// 7. ENDPOINTS DE MÓDULOS
+// =====================================================
+
+// Obtener módulos de un servicio específico
+app.MapGet("/api/services/{serviceId}/modules", async (int serviceId, IGenericRepository<Modulo> repoModulos) =>
+{
+    var todos = await repoModulos.GetAllAsync();
+    var modulos = todos.Where(m => m.ServiceId == serviceId).ToList();
+    return Results.Ok(ApiResponse.Ok(modulos, $"Módulos del servicio {serviceId} obtenidos."));
+});
+
+// Agregar un módulo a un servicio (solo el desarrollador dueño del servicio)
+app.MapPost("/api/services/{serviceId}/modules", async (int serviceId, Modulo nuevoModulo,
+    IGenericRepository<Modulo> repoModulos, IGenericRepository<FreelanceService> repoServicios) =>
+{
+    // Verificar que el servicio existe
+    var servicio = await repoServicios.GetByIdAsync(serviceId);
+    if (servicio == null)
+        return Results.BadRequest(ApiResponse.Fail("El servicio no existe."));
+
+    // Validar campos del módulo
+    if (string.IsNullOrWhiteSpace(nuevoModulo.Nombre))
+        return Results.BadRequest(ApiResponse.Fail("El nombre del módulo es obligatorio."));
+    if (nuevoModulo.Precio <= 0)
+        return Results.BadRequest(ApiResponse.Fail("El precio del módulo debe ser mayor a Bs 0."));
+
+    nuevoModulo.ServiceId = serviceId;
+    await repoModulos.AddAsync(nuevoModulo);
+
+    return Results.Created($"/api/services/{serviceId}/modules/{nuevoModulo.Id}",
+        ApiResponse.Ok(nuevoModulo, $"¡Módulo '{nuevoModulo.Nombre}' agregado exitosamente!"));
+});
+
+// Eliminar un módulo
+app.MapDelete("/api/modules/{id}", async (int id, IGenericRepository<Modulo> repoModulos) =>
+{
+    var modulo = await repoModulos.GetByIdAsync(id);
+    if (modulo == null)
+        return Results.NotFound(ApiResponse.Fail("El módulo no existe."));
+
+    await repoModulos.DeleteAsync(id);
+    return Results.Ok(ApiResponse.Ok(modulo, "Módulo eliminado correctamente."));
+});
+
+// =====================================================
+// 8. ENDPOINTS DE PROPUESTAS
 // =====================================================
 
 // Obtener todas las propuestas
@@ -174,19 +212,19 @@ app.MapGet("/api/proposals", async (IGenericRepository<Proposal> repo) =>
 app.MapGet("/api/proposals/developer/{developerId}", async (int developerId, IGenericRepository<Proposal> repo) =>
 {
     var todas = await repo.GetAllAsync();
-    var propuestasDesarrollador = todas.Where(p => p.FreelancerId == developerId).ToList();
-    return Results.Ok(ApiResponse.Ok(propuestasDesarrollador, "Propuestas del desarrollador obtenidas."));
+    var resultado = todas.Where(p => p.FreelancerId == developerId).ToList();
+    return Results.Ok(ApiResponse.Ok(resultado, "Propuestas del desarrollador obtenidas."));
 });
 
 // Obtener propuestas enviadas por un cliente específico
 app.MapGet("/api/proposals/client/{clientId}", async (int clientId, IGenericRepository<Proposal> repo) =>
 {
     var todas = await repo.GetAllAsync();
-    var propuestasCliente = todas.Where(p => p.ClientId == clientId).ToList();
-    return Results.Ok(ApiResponse.Ok(propuestasCliente, "Propuestas del cliente obtenidas."));
+    var resultado = todas.Where(p => p.ClientId == clientId).ToList();
+    return Results.Ok(ApiResponse.Ok(resultado, "Propuestas del cliente obtenidas."));
 });
 
-// Enviar una propuesta (Demuestra la refactorización y cálculo de comisiones en Bs)
+// Enviar una propuesta (con soporte para sistema completo o módulos individuales)
 app.MapPost("/api/proposals", async (Proposal proposal, IProposalService proposalService) =>
 {
     try
@@ -204,7 +242,7 @@ app.MapPost("/api/proposals", async (Proposal proposal, IProposalService proposa
     }
 });
 
-// Aceptar una propuesta (Cambia estados en SQL Server)
+// Aceptar una propuesta
 app.MapPost("/api/proposals/{id}/accept", async (int id, IProposalService proposalService) =>
 {
     var resultado = await proposalService.AcceptProposalAsync(id);
@@ -212,14 +250,13 @@ app.MapPost("/api/proposals/{id}/accept", async (int id, IProposalService propos
 });
 
 // =====================================================
-// 8. ENDPOINTS AUXILIARES
+// 9. ENDPOINTS AUXILIARES
 // =====================================================
 
-// Obtener usuarios (para el frontend)
+// Obtener usuarios (para el frontend — sin contraseñas)
 app.MapGet("/api/users", async (IGenericRepository<User> repo) =>
 {
     var usuarios = await repo.GetAllAsync();
-    // No devolver contraseñas
     var seguros = usuarios.Select(u => new User
     {
         Id = u.Id, Name = u.Name, Email = u.Email, Password = "",
@@ -228,19 +265,17 @@ app.MapGet("/api/users", async (IGenericRepository<User> repo) =>
     return Results.Ok(ApiResponse.Ok(seguros, "Usuarios obtenidos exitosamente."));
 });
 
-// Ruta de semilla - Poblar con datos iniciales de prueba
+// Semilla — poblar con datos iniciales de prueba
 app.MapGet("/api/seed", async (
     IGenericRepository<User> repoUsuarios,
-    IGenericRepository<FreelanceService> repoServicios) =>
+    IGenericRepository<FreelanceService> repoServicios,
+    IGenericRepository<Modulo> repoModulos) =>
 {
     var usuarios = await repoUsuarios.GetAllAsync();
     if (!usuarios.Any())
     {
-        // Agregar Desarrolladores de ejemplo
         var dev1 = new User { Name = "Julian Rueda", Email = "julian@freerueda.com", Password = "123456", Role = "Freelancer", Rating = 4.8, IsActive = true, ProfileCompleted = true };
         var dev2 = new User { Name = "Maria Gomez", Email = "maria@freerueda.com", Password = "123456", Role = "Freelancer", Rating = 4.9, IsActive = true, ProfileCompleted = true };
-
-        // Agregar Clientes de ejemplo
         var cliente1 = new User { Name = "TechBolivia SRL", Email = "contacto@techbolivia.bo", Password = "123456", Role = "Client", Rating = 5.0 };
         var cliente2 = new User { Name = "Startup InnovaCode", Email = "info@innovacode.bo", Password = "123456", Role = "Client", Rating = 5.0 };
 
@@ -249,14 +284,32 @@ app.MapGet("/api/seed", async (
         await repoUsuarios.AddAsync(cliente1);
         await repoUsuarios.AddAsync(cliente2);
 
-        // Agregar Servicios publicados por desarrolladores
-        var s1 = new FreelanceService { Title = "Desarrollo de Sistema ERP", Description = "Sistema ERP empresarial con .NET 8 y SQL Server. Módulos de inventario, facturación y reportes.", BasePrice = 10500.00m, Category = "Desarrollo Backend", FreelancerId = dev1.Id };
-        var s2 = new FreelanceService { Title = "Aplicación Web React", Description = "Interfaces modernas con React, diseño UI/UX profesional y conexión con APIs REST.", BasePrice = 5600.00m, Category = "Desarrollo Frontend", FreelancerId = dev2.Id };
+        // Servicios con módulos de ejemplo
+        var s1 = new FreelanceService { Title = "Sistema ERP Empresarial", Description = "Sistema completo de gestión empresarial con módulos independientes adquiribles por separado.", BasePrice = 10500.00m, Category = "Sistema de Gestión (ERP)", FreelancerId = dev1.Id };
+        var s2 = new FreelanceService { Title = "Sistema Web de Escaneo de Productos", Description = "Sistema web para supermercados con escaneo de productos, inventario y reportes.", BasePrice = 6000.00m, Category = "Sistema Web", FreelancerId = dev1.Id };
+        var s3 = new FreelanceService { Title = "Aplicación Móvil Flutter", Description = "App móvil multiplataforma con módulos de autenticación, notificaciones y panel de control.", BasePrice = 7500.00m, Category = "Aplicación Móvil", FreelancerId = dev2.Id };
 
         await repoServicios.AddAsync(s1);
         await repoServicios.AddAsync(s2);
+        await repoServicios.AddAsync(s3);
 
-        return Results.Ok(ApiResponse.Ok("¡Base de datos sembrada! Usuarios de prueba: julian@freerueda.com / 123456 (Desarrollador) | contacto@techbolivia.bo / 123456 (Cliente)"));
+        // Módulos del Sistema ERP
+        await repoModulos.AddAsync(new Modulo { ServiceId = s1.Id, Nombre = "Gestión de Usuarios", Descripcion = "Administración de roles, permisos y accesos del sistema.", Precio = 1500.00m });
+        await repoModulos.AddAsync(new Modulo { ServiceId = s1.Id, Nombre = "Gestión de Inventario", Descripcion = "Control de stock, entradas y salidas de productos.", Precio = 2500.00m });
+        await repoModulos.AddAsync(new Modulo { ServiceId = s1.Id, Nombre = "Facturación", Descripcion = "Emisión de facturas, notas de crédito y reportes de ventas.", Precio = 2000.00m });
+        await repoModulos.AddAsync(new Modulo { ServiceId = s1.Id, Nombre = "Reportes y Estadísticas", Descripcion = "Dashboards y reportes exportables en PDF/Excel.", Precio = 1800.00m });
+
+        // Módulos del Sistema de Escaneo
+        await repoModulos.AddAsync(new Modulo { ServiceId = s2.Id, Nombre = "Escaneo de Productos", Descripcion = "Lectura de códigos de barra y QR para identificar productos.", Precio = 1800.00m });
+        await repoModulos.AddAsync(new Modulo { ServiceId = s2.Id, Nombre = "Control de Stock", Descripcion = "Alertas de stock mínimo y reposición automática.", Precio = 1500.00m });
+        await repoModulos.AddAsync(new Modulo { ServiceId = s2.Id, Nombre = "Punto de Venta", Descripcion = "Módulo de caja con cálculo de vuelto y cierre de caja.", Precio = 2000.00m });
+
+        // Módulos de la App Móvil
+        await repoModulos.AddAsync(new Modulo { ServiceId = s3.Id, Nombre = "Autenticación", Descripcion = "Login, registro y recuperación de contraseña.", Precio = 1200.00m });
+        await repoModulos.AddAsync(new Modulo { ServiceId = s3.Id, Nombre = "Panel de Control", Descripcion = "Dashboard con métricas y accesos rápidos.", Precio = 1800.00m });
+        await repoModulos.AddAsync(new Modulo { ServiceId = s3.Id, Nombre = "Notificaciones Push", Descripcion = "Sistema de alertas y notificaciones en tiempo real.", Precio = 1500.00m });
+
+        return Results.Ok(ApiResponse.Ok("Base de datos sembrada con módulos de ejemplo. Usuario de prueba: julian@freerueda.com / 123456"));
     }
     return Results.Ok(ApiResponse.Ok("La base de datos ya contiene datos."));
 });
@@ -269,7 +322,7 @@ app.MapGet("/api/crash", () =>
 
 app.Run();
 
-// 9. CONFIGURACIÓN DE SERIALIZACIÓN JSON
+// 10. CONFIGURACIÓN DE SERIALIZACIÓN JSON
 [JsonSerializable(typeof(User))]
 [JsonSerializable(typeof(User[]))]
 [JsonSerializable(typeof(List<User>))]
@@ -277,17 +330,27 @@ app.Run();
 [JsonSerializable(typeof(FreelanceService))]
 [JsonSerializable(typeof(FreelanceService[]))]
 [JsonSerializable(typeof(List<FreelanceService>))]
+[JsonSerializable(typeof(IEnumerable<FreelanceService>))]
+[JsonSerializable(typeof(Modulo))]
+[JsonSerializable(typeof(Modulo[]))]
+[JsonSerializable(typeof(List<Modulo>))]
+[JsonSerializable(typeof(IEnumerable<Modulo>))]
 [JsonSerializable(typeof(Proposal))]
 [JsonSerializable(typeof(Proposal[]))]
 [JsonSerializable(typeof(List<Proposal>))]
+[JsonSerializable(typeof(IEnumerable<Proposal>))]
 [JsonSerializable(typeof(ApiResponse))]
 [JsonSerializable(typeof(ApiResponse<User>))]
 [JsonSerializable(typeof(ApiResponse<IEnumerable<User>>))]
 [JsonSerializable(typeof(ApiResponse<FreelanceService>))]
 [JsonSerializable(typeof(ApiResponse<IEnumerable<FreelanceService>>))]
+[JsonSerializable(typeof(ApiResponse<Modulo>))]
+[JsonSerializable(typeof(ApiResponse<IEnumerable<Modulo>>))]
+[JsonSerializable(typeof(ApiResponse<List<Modulo>>))]
 [JsonSerializable(typeof(ApiResponse<Proposal>))]
 [JsonSerializable(typeof(ApiResponse<IEnumerable<Proposal>>))]
 [JsonSerializable(typeof(ApiResponse<object>))]
+[JsonSerializable(typeof(ApiResponse<string>))]
 internal partial class AppJsonSerializerContext : JsonSerializerContext
 {
 }

@@ -1,4 +1,4 @@
-// Servicio central de comunicación con el backend API de FreelanRueda
+// Servicio central de comunicación con el backend API de FreelancRued
 const API_BASE = 'http://localhost:5160/api';
 
 async function peticion(endpoint, opciones = {}) {
@@ -19,6 +19,11 @@ export const api = {
   // Servicios
   getServices: () => peticion('/services'),
   createService: (servicio) => peticion('/services', { method: 'POST', body: JSON.stringify(servicio) }),
+
+  // Módulos de servicios
+  getModules: (serviceId) => peticion(`/services/${serviceId}/modules`),
+  addModule: (serviceId, modulo) => peticion(`/services/${serviceId}/modules`, { method: 'POST', body: JSON.stringify(modulo) }),
+  deleteModule: (moduleId) => peticion(`/modules/${moduleId}`, { method: 'DELETE' }),
 
   // Propuestas
   getProposals: () => peticion('/proposals'),

@@ -9,10 +9,7 @@ using FreelanceMarketplace.API.Utils;
 
 namespace FreelanceMarketplace.API.Middlewares
 {
-    // Componente reutilizable: Middleware global de manejo de excepciones
-    // Intercepta todos los errores no controlados del sistema, los registra en bitácora
-    // y devuelve una respuesta JSON estandarizada usando ApiResponse
-    // Esto evita que se filtren trazas de pila internas al cliente
+    
     public class ExceptionMiddleware
     {
         private readonly RequestDelegate _next;
@@ -24,22 +21,22 @@ namespace FreelanceMarketplace.API.Middlewares
             _logger = logger;
         }
 
-        // Método principal que intercepta cada solicitud HTTP
+        
         public async Task InvokeAsync(HttpContext context)
         {
             try
             {
-                await _next(context); // Continúa con la solicitud normal
+                await _next(context); 
             }
             catch (Exception ex)
             {
-                // Si ocurre un error no controlado, lo registramos y formateamos la respuesta
+                
                 _logger.LogError(ex, "Ocurrió una excepción no controlada durante la ejecución de la solicitud.");
                 await HandleExceptionAsync(context, ex);
             }
         }
 
-        // Formatea la respuesta de error como JSON estándar con código HTTP 500
+        
         private static async Task HandleExceptionAsync(HttpContext context, Exception exception)
         {
             context.Response.ContentType = "application/json";
