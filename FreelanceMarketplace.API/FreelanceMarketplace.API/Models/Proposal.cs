@@ -25,16 +25,11 @@ namespace FreelanceMarketplace.API.Models
         public decimal PlatformFee { get; set; }        // Comisión de la plataforma FreelancRued en Bs
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
-        // ====== NUEVOS CAMPOS PARA MÓDULOS ======
-        // true = el cliente quiere el sistema completo
-        // false = el cliente seleccionó módulos individuales
+        // true = el cliente quiere el sistema completo; false = seleccionó módulos individuales
         public bool EsSistemaCompleto { get; set; } = true;
-
-        // IDs de los módulos seleccionados cuando EsSistemaCompleto = false
-        // Se almacena como texto separado por comas en la BD
+        // IDs de módulos almacenados como texto separado por comas
         public string ModulosSeleccionadosIds { get; set; } = string.Empty;
-
-        // Nombre de los módulos seleccionados (para mostrar en el frontend)
+        // Nombres de módulos para mostrar en el frontend
         public string ModulosSeleccionadosNombres { get; set; } = string.Empty;
     }
 }

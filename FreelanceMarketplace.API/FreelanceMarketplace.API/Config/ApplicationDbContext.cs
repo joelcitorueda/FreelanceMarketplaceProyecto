@@ -16,6 +16,7 @@ namespace FreelanceMarketplace.API.Config
         public DbSet<FreelanceService> Servicios { get; set; } = null!;
         public DbSet<Proposal> Propuestas { get; set; } = null!;
         public DbSet<Modulo> Modulos { get; set; } = null!;    // Nueva tabla de módulos
+        public DbSet<Message> Mensajes { get; set; } = null!;   // Tabla de mensajes (conversaciones)
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -52,6 +53,14 @@ namespace FreelanceMarketplace.API.Config
                 entity.Property(e => e.Precio).HasPrecision(18, 2);
                 entity.Property(e => e.Nombre).IsRequired().HasMaxLength(200);
                 entity.Property(e => e.Descripcion).HasMaxLength(1000);
+            });
+
+            // Configurar tabla "Mensajes" — conversaciones de propuestas
+            modelBuilder.Entity<Message>(entity =>
+            {
+                entity.ToTable("Mensajes");
+                entity.Property(e => e.Text).IsRequired().HasMaxLength(2000);
+                entity.Property(e => e.SenderRole).IsRequired().HasMaxLength(20);
             });
         }
     }

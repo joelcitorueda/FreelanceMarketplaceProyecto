@@ -1,10 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useAuth } from '../contexto/AuthContexto';
 import { useNotificacion } from '../componentes/Notificacion';
+import { useMensajes } from '../contexto/MensajesContexto';
 import { api } from '../servicios/api';
 import {
-  Plus, Check, X, AlertCircle,
-  MessageSquare, User, Briefcase, Package, Layers, CheckSquare, Square
+  Plus, Check, X, AlertCircle, Pencil, Trash2, XCircle,
+  MessageSquare, User, Briefcase, Package, Layers, CheckSquare, Square,
+  Send, MessageCircle, Bot, ChevronDown, ChevronUp
 } from 'lucide-react';
 
 const MAPA_ESTADOS = {
@@ -30,12 +32,31 @@ export default function PaginaPropuestas() {
   const [usuarios, setUsuarios] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [mostrarModal, setMostrarModal] = useState(false);
+  const [editandoPropuesta, setEditandoPropuesta] = useState(null); // propuesta que se está editando
   const [formulario, setFormulario] = useState(FORMULARIO_INICIAL);
   const [enviando, setEnviando] = useState(false);
 
   // Módulos del servicio seleccionado actualmente
   const [modulosServicio, setModulosServicio] = useState([]);
   const [cargandoModulos, setCargandoModulos] = useState(false);
+
+  const { incrementarNoLeidos, limpiarNoLeidos } = useMensajes();
+
+  // Estado para conversación/chat
+  const [chatAbierto, setChatAbierto] = useState(null); // proposalId del chat abierto
+  const [mensajes, setMensajes] = useState([]);
+  const [cargandoMensajes, setCargandoMensajes] = useState(false);
+  const [nuevoMensaje, setNuevoMensaje] = useState('');
+  const [enviandoMensaje, setEnviandoMensaje] = useState(false);
+  const chatRef = useRef(null);
+  const ultimosMensajesCount = useRef({}); // { [proposalId]: cantidad } para detectar mensajes nuevos
+
+  // Auto-scroll al último mensaje
+  useEffect(() => {
+    if (chatRef.current) {
+      chatRef.current.scrollTop = chatRef.current.scrollHeight;
+    }
+  }, [mensajes]);
 
   const cargarDatos = async () => {
     try {
@@ -167,7 +188,7 @@ export default function PaginaPropuestas() {
     try {
       const res = await api.acceptProposal(id);
       if (res.success) {
-        notificar(`Propuesta #${id} aceptada. Las demás fueron rechazadas.`, 'success');
+        notificar(`Propuesta #${id} aceptada exitosamente.`, 'success');
         cargarDatos();
       } else {
         notificar(res.message || 'Error al aceptar', 'error');
@@ -175,6 +196,169 @@ export default function PaginaPropuestas() {
     } catch {
       notificar('Error de conexión', 'error');
     }
+  };
+
+  const manejarRechazar = async (id) => {
+    try {
+      const res = await api.rejectProposal(id);
+      if (res.success) {
+        notificar(`Propuesta #${id} rechazada.`, 'info');
+        cargarDatos();
+      } else {
+        notificar(res.message || 'Error al rechazar', 'error');
+      }
+    } catch {
+      notificar('Error de conexión', 'error');
+    }
+  };
+
+  const manejarEliminarPropuesta = async (id) => {
+    if (!confirm('¿Estás seguro de eliminar esta propuesta? Esta acción no se puede deshacer.')) return;
+    try {
+      const res = await api.deleteProposal(id);
+      if (res.success) {
+        notificar('Propuesta eliminada.', 'info');
+        cargarDatos();
+      } else {
+        notificar(res.message || 'Error al eliminar', 'error');
+      }
+    } catch {
+      notificar('Error de conexión', 'error');
+    }
+  };
+
+  // Funciones del chat
+  const abrirChat = async (proposalId) => {
+    setChatAbierto(proposalId);
+    setCargandoMensajes(true);
+    // Al abrir el chat, limpiar las notificaciones de mensajes nuevos
+    limpiarNoLeidos();
+    ultimosMensajesCount.current[proposalId] = 0;
+    try {
+      const res = await api.getMessages(proposalId);
+      setMensajes(res.data || []);
+      ultimosMensajesCount.current[proposalId] = (res.data || []).length;
+    } catch { /* silent */ }
+    finally { setCargandoMensajes(false); }
+  };
+
+  const cerrarChat = () => {
+    setChatAbierto(null);
+    setMensajes([]);
+    setNuevoMensaje('');
+  };
+
+  const manejarEnvioMensaje = async (e) => {
+    e.preventDefault();
+    if (!nuevoMensaje.trim()) return;
+    setEnviandoMensaje(true);
+    try {
+      const payload = {
+        senderId: usuario.id,
+        senderRole: esDesarrollador ? 'Freelancer' : 'Client',
+        text: nuevoMensaje.trim(),
+      };
+      const res = await api.sendMessage(chatAbierto, payload);
+      if (res.success) {
+        setMensajes(prev => [...prev, res.data]);
+        setNuevoMensaje('');
+      } else {
+        notificar(res.message || 'Error al enviar mensaje', 'error');
+      }
+    } catch {
+      notificar('Error de conexión', 'error');
+    } finally { setEnviandoMensaje(false); }
+  };
+
+  // Refrescar mensajes periódicamente cuando el chat está abierto
+  useEffect(() => {
+    if (chatAbierto === null) return;
+    const intervalo = setInterval(async () => {
+      try {
+        const res = await api.getMessages(chatAbierto);
+        const mensajesNuevos = res.data || [];
+        const countAnterior = ultimosMensajesCount.current[chatAbierto] || 0;
+
+        // Si hay mensajes nuevos, verificar si son de otro usuario
+        if (mensajesNuevos.length > countAnterior) {
+          const nuevos = mensajesNuevos.slice(countAnterior);
+          const mensajesDeOtros = nuevos.filter(m => m.senderId !== usuario.id);
+          if (mensajesDeOtros.length > 0) {
+            incrementarNoLeidos(mensajesDeOtros.length);
+          }
+        }
+
+        setMensajes(mensajesNuevos);
+        ultimosMensajesCount.current[chatAbierto] = mensajesNuevos.length;
+      } catch { /* silent */ }
+    }, 5000); // Refrescar cada 5 segundos
+    return () => clearInterval(intervalo);
+  }, [chatAbierto, usuario.id, incrementarNoLeidos]);
+
+  const abrirEdicion = async (propuesta) => {
+    setEditandoPropuesta(propuesta);
+    let modulosData = [];
+    // Cargar módulos del servicio si los hay
+    try {
+      const res = await api.getModules(propuesta.serviceId);
+      modulosData = res.data || [];
+      setModulosServicio(modulosData);
+    } catch { /* silent */ }
+
+    setFormulario({
+      serviceId: propuesta.serviceId.toString(),
+      proposedPrice: propuesta.proposedPrice.toString(),
+      message: propuesta.message || '',
+      esSistemaCompleto: propuesta.esSistemaCompleto,
+      modulosSeleccionados: propuesta.esSistemaCompleto
+        ? []
+        : modulosData.filter(m => propuesta.modulosSeleccionadosIds?.split(',').includes(m.id.toString())),
+    });
+    setMostrarModal(true);
+  };
+
+  const manejarEnvioEdicion = async (e) => {
+    e.preventDefault();
+    if (!editandoPropuesta) return;
+    if (!formulario.esSistemaCompleto && formulario.modulosSeleccionados.length === 0) {
+      notificar('Debes seleccionar al menos un módulo', 'warning');
+      return;
+    }
+    setEnviando(true);
+    try {
+      const modulosIds = formulario.modulosSeleccionados.map(m => m.id).join(',');
+      const modulosNombres = formulario.modulosSeleccionados.map(m => m.nombre).join(', ');
+
+      const payload = {
+        serviceId: parseInt(formulario.serviceId),
+        freelancerId: editandoPropuesta.freelancerId,
+        clientId: usuario.id,
+        proposedPrice: parseFloat(formulario.proposedPrice),
+        estimatedHours: 1,
+        message: formulario.message,
+        esSistemaCompleto: formulario.esSistemaCompleto,
+        modulosSeleccionadosIds: modulosIds,
+        modulosSeleccionadosNombres: modulosNombres,
+      };
+
+      const res = await api.updateProposal(editandoPropuesta.id, payload);
+      if (res.success) {
+        notificar('¡Propuesta actualizada exitosamente!', 'success');
+        cerrarModal();
+        cargarDatos();
+      } else {
+        notificar(res.message || 'Error al actualizar propuesta', 'error');
+      }
+    } catch {
+      notificar('Error de conexión con el servidor', 'error');
+    } finally { setEnviando(false); }
+  };
+
+  const cerrarModal = () => {
+    setMostrarModal(false);
+    setEditandoPropuesta(null);
+    setFormulario(FORMULARIO_INICIAL);
+    setModulosServicio([]);
   };
 
   const obtenerNombreUsuario = (id) => usuarios.find((u) => u.id === id)?.name || `ID ${id}`;
@@ -278,29 +462,130 @@ export default function PaginaPropuestas() {
                   </span>
                 </div>
 
+                {/* Acciones del desarrollador: Aceptar o Rechazar (solo pendientes) */}
                 {esDesarrollador && p.status === 0 && (
                   <div style={{ display: 'flex', gap: 8, marginTop: '1rem' }}>
                     <button className="btn btn-success btn-sm" onClick={() => manejarAceptar(p.id)}>
                       <Check size={14} /> Aceptar Propuesta
                     </button>
+                    <button className="btn btn-danger btn-sm" onClick={() => manejarRechazar(p.id)}>
+                      <XCircle size={14} /> Rechazar
+                    </button>
                   </div>
                 )}
+
+                {/* Acciones del cliente: Editar o Eliminar (solo pendientes) */}
+                {esCliente && p.status === 0 && (
+                  <div style={{ display: 'flex', gap: 8, marginTop: '1rem' }}>
+                    <button className="btn btn-ghost btn-sm" onClick={() => abrirEdicion(p)}>
+                      <Pencil size={14} /> Editar
+                    </button>
+                    <button className="btn btn-danger-outline btn-sm" onClick={() => manejarEliminarPropuesta(p.id)}>
+                      <Trash2 size={14} /> Eliminar
+                    </button>
+                  </div>
+                )}
+
+                {/* Botón para abrir la conversación — visible para ambos roles y cualquier estado */}
+                <div style={{ marginTop: '0.75rem', paddingTop: '0.75rem', borderTop: '1px solid var(--border-subtle)' }}>
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => abrirChat(p.id)}
+                    style={{ width: '100%', justifyContent: 'center' }}
+                  >
+                    <MessageCircle size={14} />{' '}
+                    {chatAbierto === p.id ? 'Cerrar conversación' : 'Ver conversación'}
+                  </button>
+                </div>
               </div>
             );
           })}
         </div>
       )}
 
-      {/* Modal para crear propuesta (solo clientes) */}
-      {mostrarModal && (
-        <div className="modal-overlay" onClick={() => { setMostrarModal(false); setModulosServicio([]); }}>
-          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 600 }}>
-            <div className="modal-header">
-              <h2>Nueva Propuesta</h2>
-              <button className="modal-close" onClick={() => { setMostrarModal(false); setModulosServicio([]); }}><X size={20} /></button>
+      {/* Panel de conversación / Chat */}
+      {chatAbierto !== null && (
+        <div className="modal-overlay" onClick={cerrarChat}>
+          <div className="chat-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="chat-header">
+              <h3 style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <MessageCircle size={18} /> Conversación — Propuesta #{chatAbierto}
+              </h3>
+              <button className="modal-close" onClick={cerrarChat}><X size={20} /></button>
             </div>
 
-            <form onSubmit={manejarEnvio}>
+            <div className="chat-messages" ref={chatRef}>
+              {cargandoMensajes ? (
+                <div className="loading-container" style={{ padding: '2rem 0' }}>
+                  <div className="spinner" />
+                  <p className="loading-text">Cargando mensajes...</p>
+                </div>
+              ) : mensajes.length === 0 ? (
+                <div className="empty-state" style={{ padding: '2rem 0' }}>
+                  <MessageCircle size={36} />
+                  <h3 style={{ fontSize: '0.95rem' }}>Sin mensajes aún</h3>
+                  <p style={{ fontSize: '0.8rem' }}>Envía el primer mensaje para iniciar la conversación.</p>
+                </div>
+              ) : (
+                mensajes.map((msg) => {
+                  const esMio = msg.senderId === usuario.id;
+                  const esSistema = msg.isSystemMessage;
+                  return (
+                    <div
+                      key={msg.id}
+                      className={`chat-bubble ${esSistema ? 'chat-system' : esMio ? 'chat-mine' : 'chat-theirs'}`}
+                    >
+                      {!esSistema && (
+                        <div className="chat-bubble-sender">
+                          <User size={12} /> {esMio ? 'Tú' : msg.senderRole === 'Freelancer' ? 'Desarrollador' : 'Cliente'}
+                        </div>
+                      )}
+                      <div className="chat-bubble-text">{msg.text}</div>
+                      <div className="chat-bubble-time">
+                        {new Date(msg.createdAt).toLocaleString('es-BO', {
+                          hour: '2-digit', minute: '2-digit',
+                          day: '2-digit', month: '2-digit'
+                        })}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            <form className="chat-input-area" onSubmit={manejarEnvioMensaje}>
+              <input
+                type="text"
+                value={nuevoMensaje}
+                onChange={(e) => setNuevoMensaje(e.target.value)}
+                className="chat-input"
+                placeholder="Escribe tu mensaje..."
+                disabled={enviandoMensaje}
+                autoFocus
+              />
+              <button
+                type="submit"
+                className="btn btn-primary btn-sm"
+                disabled={!nuevoMensaje.trim() || enviandoMensaje}
+                style={{ padding: '10px 16px' }}
+              >
+                {enviandoMensaje ? '...' : <Send size={16} />}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal para crear o editar propuesta (solo clientes) */}
+      {mostrarModal && (
+        <div className="modal-overlay" onClick={cerrarModal}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 600 }}>
+            <div className="modal-header">
+              <h2>{editandoPropuesta ? 'Editar Propuesta' : 'Nueva Propuesta'}</h2>
+              <button className="modal-close" onClick={cerrarModal}><X size={20} /></button>
+            </div>
+
+            <form onSubmit={editandoPropuesta ? manejarEnvioEdicion : manejarEnvio}>
               {/* 1. Selección del servicio */}
               <div className="form-group">
                 <label className="form-label">Selecciona el sistema</label>
@@ -439,9 +724,9 @@ export default function PaginaPropuestas() {
               </div>
 
               <div className="modal-actions">
-                <button type="button" className="btn btn-ghost" onClick={() => { setMostrarModal(false); setModulosServicio([]); }}>Cancelar</button>
+                <button type="button" className="btn btn-ghost" onClick={cerrarModal}>Cancelar</button>
                 <button type="submit" className="btn btn-primary" disabled={enviando}>
-                  {enviando ? 'Enviando...' : <><Plus size={16} /> Enviar Propuesta</>}
+                  {enviando ? 'Guardando...' : editandoPropuesta ? <><Pencil size={16} /> Guardar Cambios</> : <><Plus size={16} /> Enviar Propuesta</>}
                 </button>
               </div>
             </form>

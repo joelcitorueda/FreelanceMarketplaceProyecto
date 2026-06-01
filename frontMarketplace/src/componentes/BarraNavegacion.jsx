@@ -1,9 +1,11 @@
 import { NavLink } from 'react-router-dom';
 import { useAuth } from '../contexto/AuthContexto';
-import { Home, Briefcase, FileText, LogOut, Code, Building2 } from 'lucide-react';
+import { useMensajes } from '../contexto/MensajesContexto';
+import { Home, Briefcase, FileText, LogOut, Code, Building2, MessageCircle } from 'lucide-react';
 
 export default function BarraNavegacion() {
   const { usuario, cerrarSesion, esDesarrollador } = useAuth();
+  const { totalNoLeidos } = useMensajes();
 
   return (
     <nav className="navbar">
@@ -21,6 +23,12 @@ export default function BarraNavegacion() {
           </NavLink>
           <NavLink to="/propuestas" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
             <FileText /> Propuestas
+            {totalNoLeidos > 0 && (
+              <span className="nav-badge">
+                <MessageCircle size={10} />
+                {totalNoLeidos}
+              </span>
+            )}
           </NavLink>
 
           <div className="navbar-user">

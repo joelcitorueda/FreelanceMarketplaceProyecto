@@ -21,3 +21,8 @@ desktop.ini
 .idea/
 *.swp
 *.swo
+
+# Word / Informes
+*.docx
+~$*.docx
+generar_informe_actividad4.py

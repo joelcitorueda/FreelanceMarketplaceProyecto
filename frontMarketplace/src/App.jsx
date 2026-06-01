@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexto/AuthContexto';
 import { NotificacionProvider } from './componentes/Notificacion';
+import { MensajesProvider } from './contexto/MensajesContexto';
 import BarraNavegacion from './componentes/BarraNavegacion';
 import PaginaAuth from './paginas/PaginaAuth';
 import PaginaInicio from './paginas/PaginaInicio';
@@ -45,7 +46,9 @@ export default function App() {
   return (
     <AuthProvider>
       <NotificacionProvider>
-        <ContenidoApp />
+        <MensajesProvider>
+          <ContenidoApp />
+        </MensajesProvider>
       </NotificacionProvider>
     </AuthProvider>
   );

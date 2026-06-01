@@ -14,22 +14,32 @@ using FreelanceMarketplace.API.Services;
 using FreelanceMarketplace.API.Utils;
 using FreelanceMarketplace.API.Middlewares;
 using FreelanceMarketplace.API.Config;
+using FreelanceMarketplace.API.Patrones.Observador;
+using FreelanceMarketplace.API.Patrones.Mediator;
 
 var builder = WebApplication.CreateSlimBuilder(args);
 
-// 1. CONFIGURAR BASE DE DATOS Y CONTENEDOR DE INYECCIÓN DE DEPENDENCIAS
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
     ?? "Server=DESKTOP-EROEUF5\\SQLEXPRESS;Database=Marketplace;Trusted_Connection=True;TrustServerCertificate=True;";
 
-// Registrar el contexto de base de datos con SQL Server
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
     options.UseSqlServer(connectionString));
 
-// Registrar repositorios genéricos usando registro de genéricos abiertos
 builder.Services.AddScoped(typeof(IGenericRepository<>), typeof(SqlRepository<>));
 builder.Services.AddScoped<IProposalService, ProposalService>();
 
-// Configurar CORS para permitir comunicación con el frontend React
+// Patrón Mediator — gestor de conversación como Scoped
+builder.Services.AddScoped<IGestorConversacion, GestorConversacion>();
+
+// Patrón Observer — gestor de eventos como Singleton
+builder.Services.AddSingleton<GestorEventosPropuesta>(sp =>
+{
+    var gestor = new GestorEventosPropuesta();
+    gestor.Suscribir(new ObservadorRegistroConsola());
+    gestor.Suscribir(new ObservadorEstadisticas());
+    return gestor;
+});
+
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("PermitirFrontend", policy =>
@@ -40,7 +50,6 @@ builder.Services.AddCors(options =>
     });
 });
 
-// Configurar opciones de serialización JSON
 builder.Services.ConfigureHttpJsonOptions(options =>
 {
     options.SerializerOptions.TypeInfoResolverChain.Insert(0, AppJsonSerializerContext.Default);
@@ -48,24 +57,30 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 
 var app = builder.Build();
 
-// 2. INICIALIZAR ESTRUCTURA DE LA BASE DE DATOS AUTOMÁTICAMENTE
+// Inicializar BD automáticamente
 using (var scope = app.Services.CreateScope())
 {
     var context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
     context.Database.EnsureCreated();
+
+    // Crear tabla Mensajes si no existe (agregada después de la creación inicial de la BD)
+    context.Database.ExecuteSqlRaw(@"
+        IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'Mensajes')
+        CREATE TABLE Mensajes (
+            Id INT IDENTITY(1,1) PRIMARY KEY,
+            ProposalId INT NOT NULL,
+            SenderId INT NOT NULL,
+            SenderRole NVARCHAR(20) NOT NULL,
+            Text NVARCHAR(2000) NOT NULL,
+            CreatedAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
+            IsSystemMessage BIT NOT NULL DEFAULT 0
+        )");
 }
 
-// 3. HABILITAR CORS
 app.UseCors("PermitirFrontend");
-
-// 4. REGISTRAR MIDDLEWARE GLOBAL DE EXCEPCIONES
 app.UseMiddleware<ExceptionMiddleware>();
 
-// =====================================================
-// 5. ENDPOINTS DE AUTENTICACIÓN
-// =====================================================
-
-// Registrar un nuevo usuario (Desarrollador o Cliente)
+// AUTH
 app.MapPost("/api/auth/register", async (User nuevoUsuario, IGenericRepository<User> repoUsuarios) =>
 {
     if (string.IsNullOrWhiteSpace(nuevoUsuario.Name))
@@ -90,7 +105,6 @@ app.MapPost("/api/auth/register", async (User nuevoUsuario, IGenericRepository<U
     return Results.Ok(ApiResponse.Ok(nuevoUsuario, "¡Cuenta creada exitosamente! Ya puedes iniciar sesión."));
 });
 
-// Iniciar sesión con correo y contraseña
 app.MapPost("/api/auth/login", async (User loginData, IGenericRepository<User> repoUsuarios) =>
 {
     if (string.IsNullOrWhiteSpace(loginData.Email) || string.IsNullOrWhiteSpace(loginData.Password))
@@ -113,24 +127,18 @@ app.MapPost("/api/auth/login", async (User loginData, IGenericRepository<User> r
     return Results.Ok(ApiResponse.Ok(respuesta, $"¡Bienvenido {usuario.Name}!"));
 });
 
-// =====================================================
-// 6. ENDPOINTS DE SERVICIOS
-// =====================================================
-
-// Obtener todos los servicios publicados (incluye módulos de cada uno)
+// SERVICIOS
 app.MapGet("/api/services", async (IGenericRepository<FreelanceService> repoServicios, IGenericRepository<Modulo> repoModulos) =>
 {
     var servicios = (await repoServicios.GetAllAsync()).ToList();
     var todosModulos = (await repoModulos.GetAllAsync()).ToList();
 
-    // Asignar módulos a cada servicio
     foreach (var servicio in servicios)
         servicio.Modulos = todosModulos.Where(m => m.ServiceId == servicio.Id).ToList();
 
     return Results.Ok(ApiResponse.Ok(servicios, "Servicios obtenidos exitosamente."));
 });
 
-// Crear/publicar un nuevo servicio (solo desarrolladores)
 app.MapPost("/api/services", async (FreelanceService nuevoServicio, IGenericRepository<FreelanceService> repoServicios, IGenericRepository<User> repoUsuarios) =>
 {
     if (string.IsNullOrWhiteSpace(nuevoServicio.Title))
@@ -152,11 +160,46 @@ app.MapPost("/api/services", async (FreelanceService nuevoServicio, IGenericRepo
     return Results.Created($"/api/services/{nuevoServicio.Id}", ApiResponse.Ok(nuevoServicio, "¡Servicio publicado exitosamente!"));
 });
 
-// =====================================================
-// 7. ENDPOINTS DE MÓDULOS
-// =====================================================
+app.MapPut("/api/services/{id}", async (int id, FreelanceService servicioActualizado, IGenericRepository<FreelanceService> repoServicios, IGenericRepository<User> repoUsuarios) =>
+{
+    var servicioExistente = await repoServicios.GetByIdAsync(id);
+    if (servicioExistente == null)
+        return Results.NotFound(ApiResponse.Fail("El servicio no existe."));
 
-// Obtener módulos de un servicio específico
+    if (string.IsNullOrWhiteSpace(servicioActualizado.Title))
+        return Results.BadRequest(ApiResponse.Fail("El título del servicio es obligatorio."));
+    if (string.IsNullOrWhiteSpace(servicioActualizado.Description))
+        return Results.BadRequest(ApiResponse.Fail("La descripción del servicio es obligatoria."));
+    if (servicioActualizado.BasePrice <= 0)
+        return Results.BadRequest(ApiResponse.Fail("El precio base debe ser mayor a Bs 0."));
+    if (string.IsNullOrWhiteSpace(servicioActualizado.Category))
+        return Results.BadRequest(ApiResponse.Fail("La categoría es obligatoria."));
+
+    servicioExistente.Title = servicioActualizado.Title;
+    servicioExistente.Description = servicioActualizado.Description;
+    servicioExistente.BasePrice = servicioActualizado.BasePrice;
+    servicioExistente.Category = servicioActualizado.Category;
+
+    await repoServicios.UpdateAsync(servicioExistente);
+    return Results.Ok(ApiResponse.Ok(servicioExistente, "¡Servicio actualizado exitosamente!"));
+});
+
+app.MapDelete("/api/services/{id}", async (int id, IGenericRepository<FreelanceService> repoServicios, IGenericRepository<Modulo> repoModulos) =>
+{
+    var servicio = await repoServicios.GetByIdAsync(id);
+    if (servicio == null)
+        return Results.NotFound(ApiResponse.Fail("El servicio no existe."));
+
+    var todosModulos = await repoModulos.GetAllAsync();
+    var modulosServicio = todosModulos.Where(m => m.ServiceId == id).ToList();
+    foreach (var mod in modulosServicio)
+        await repoModulos.DeleteAsync(mod.Id);
+
+    await repoServicios.DeleteAsync(id);
+    return Results.Ok(ApiResponse.Ok(servicio, "Servicio y sus módulos eliminados correctamente."));
+});
+
+// MÓDULOS
 app.MapGet("/api/services/{serviceId}/modules", async (int serviceId, IGenericRepository<Modulo> repoModulos) =>
 {
     var todos = await repoModulos.GetAllAsync();
@@ -164,16 +207,13 @@ app.MapGet("/api/services/{serviceId}/modules", async (int serviceId, IGenericRe
     return Results.Ok(ApiResponse.Ok(modulos, $"Módulos del servicio {serviceId} obtenidos."));
 });
 
-// Agregar un módulo a un servicio (solo el desarrollador dueño del servicio)
 app.MapPost("/api/services/{serviceId}/modules", async (int serviceId, Modulo nuevoModulo,
     IGenericRepository<Modulo> repoModulos, IGenericRepository<FreelanceService> repoServicios) =>
 {
-    // Verificar que el servicio existe
     var servicio = await repoServicios.GetByIdAsync(serviceId);
     if (servicio == null)
         return Results.BadRequest(ApiResponse.Fail("El servicio no existe."));
 
-    // Validar campos del módulo
     if (string.IsNullOrWhiteSpace(nuevoModulo.Nombre))
         return Results.BadRequest(ApiResponse.Fail("El nombre del módulo es obligatorio."));
     if (nuevoModulo.Precio <= 0)
@@ -186,7 +226,6 @@ app.MapPost("/api/services/{serviceId}/modules", async (int serviceId, Modulo nu
         ApiResponse.Ok(nuevoModulo, $"¡Módulo '{nuevoModulo.Nombre}' agregado exitosamente!"));
 });
 
-// Eliminar un módulo
 app.MapDelete("/api/modules/{id}", async (int id, IGenericRepository<Modulo> repoModulos) =>
 {
     var modulo = await repoModulos.GetByIdAsync(id);
@@ -197,18 +236,46 @@ app.MapDelete("/api/modules/{id}", async (int id, IGenericRepository<Modulo> rep
     return Results.Ok(ApiResponse.Ok(modulo, "Módulo eliminado correctamente."));
 });
 
-// =====================================================
-// 8. ENDPOINTS DE PROPUESTAS
-// =====================================================
+// MENSAJERÍA
+app.MapGet("/api/proposals/{proposalId}/messages", async (int proposalId, IGestorConversacion gestor) =>
+{
+    try
+    {
+        var mensajes = await gestor.ObtenerMensajesAsync(proposalId);
+        return Results.Ok(ApiResponse.Ok(mensajes, "Mensajes obtenidos."));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(ApiResponse.Fail(ex.Message));
+    }
+});
 
-// Obtener todas las propuestas
+app.MapPost("/api/proposals/{proposalId}/messages", async (int proposalId, Message nuevoMensaje, IGestorConversacion gestor) =>
+{
+    try
+    {
+        var mensaje = await gestor.EnviarMensajeAsync(
+            proposalId, nuevoMensaje.SenderId, nuevoMensaje.SenderRole, nuevoMensaje.Text);
+        return Results.Created($"/api/proposals/{proposalId}/messages/{mensaje.Id}",
+            ApiResponse.Ok(mensaje, "Mensaje enviado."));
+    }
+    catch (ArgumentException ex)
+    {
+        return Results.BadRequest(ApiResponse.Fail(ex.Message));
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(ApiResponse.Fail(ex.Message));
+    }
+});
+
+// PROPUESTAS
 app.MapGet("/api/proposals", async (IGenericRepository<Proposal> repo) =>
 {
     var propuestas = await repo.GetAllAsync();
     return Results.Ok(ApiResponse.Ok(propuestas, "Propuestas obtenidas exitosamente."));
 });
 
-// Obtener propuestas recibidas por un desarrollador específico
 app.MapGet("/api/proposals/developer/{developerId}", async (int developerId, IGenericRepository<Proposal> repo) =>
 {
     var todas = await repo.GetAllAsync();
@@ -216,7 +283,6 @@ app.MapGet("/api/proposals/developer/{developerId}", async (int developerId, IGe
     return Results.Ok(ApiResponse.Ok(resultado, "Propuestas del desarrollador obtenidas."));
 });
 
-// Obtener propuestas enviadas por un cliente específico
 app.MapGet("/api/proposals/client/{clientId}", async (int clientId, IGenericRepository<Proposal> repo) =>
 {
     var todas = await repo.GetAllAsync();
@@ -224,12 +290,14 @@ app.MapGet("/api/proposals/client/{clientId}", async (int clientId, IGenericRepo
     return Results.Ok(ApiResponse.Ok(resultado, "Propuestas del cliente obtenidas."));
 });
 
-// Enviar una propuesta (con soporte para sistema completo o módulos individuales)
-app.MapPost("/api/proposals", async (Proposal proposal, IProposalService proposalService) =>
+app.MapPost("/api/proposals", async (Proposal proposal, IProposalService proposalService, IGestorConversacion gestor) =>
 {
     try
     {
         var resultado = await proposalService.SubmitProposalAsync(proposal);
+        await gestor.RegistrarEventoAsync(resultado.Id,
+            $"📩 Propuesta creada por el cliente. Precio ofrecido: Bs {resultado.ProposedPrice:F2}. " +
+            (resultado.EsSistemaCompleto ? "(Sistema Completo)" : $"(Módulos: {resultado.ModulosSeleccionadosNombres})"));
         return Results.Created($"/api/proposals/{resultado.Id}", ApiResponse.Ok(resultado, "¡Propuesta enviada exitosamente!"));
     }
     catch (ArgumentException ex)
@@ -242,18 +310,70 @@ app.MapPost("/api/proposals", async (Proposal proposal, IProposalService proposa
     }
 });
 
-// Aceptar una propuesta
-app.MapPost("/api/proposals/{id}/accept", async (int id, IProposalService proposalService) =>
+app.MapPost("/api/proposals/{id}/accept", async (int id, IProposalService proposalService, IGestorConversacion gestor) =>
 {
-    var resultado = await proposalService.AcceptProposalAsync(id);
-    return Results.Ok(ApiResponse.Ok(resultado, $"Propuesta #{id} aceptada. Las demás fueron rechazadas automáticamente."));
+    try
+    {
+        var resultado = await proposalService.AcceptProposalAsync(id);
+        await gestor.RegistrarEventoAsync(id, "✅ Propuesta ACEPTADA por el desarrollador.");
+        return Results.Ok(ApiResponse.Ok(resultado, $"Propuesta #{id} aceptada exitosamente."));
+    }
+    catch (KeyNotFoundException ex)
+    {
+        return Results.NotFound(ApiResponse.Fail(ex.Message));
+    }
 });
 
-// =====================================================
-// 9. ENDPOINTS AUXILIARES
-// =====================================================
+app.MapPost("/api/proposals/{id}/reject", async (int id, IProposalService proposalService, IGestorConversacion gestor) =>
+{
+    try
+    {
+        var resultado = await proposalService.RejectProposalAsync(id);
+        await gestor.RegistrarEventoAsync(id, "❌ Propuesta RECHAZADA por el desarrollador.");
+        return Results.Ok(ApiResponse.Ok(resultado, $"Propuesta #{id} rechazada."));
+    }
+    catch (KeyNotFoundException ex)
+    {
+        return Results.NotFound(ApiResponse.Fail(ex.Message));
+    }
+});
 
-// Obtener usuarios (para el frontend — sin contraseñas)
+app.MapPut("/api/proposals/{id}", async (int id, Proposal updatedProposal, IProposalService proposalService, IGestorConversacion gestor) =>
+{
+    try
+    {
+        var resultado = await proposalService.UpdateProposalAsync(id, updatedProposal);
+        await gestor.RegistrarEventoAsync(id, $"✏️ El cliente actualizó la propuesta (nuevo precio: Bs {updatedProposal.ProposedPrice:F2}).");
+        return Results.Ok(ApiResponse.Ok(resultado, $"Propuesta #{id} actualizada exitosamente."));
+    }
+    catch (ArgumentException ex)
+    {
+        return Results.BadRequest(ApiResponse.Fail(ex.Message));
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Results.BadRequest(ApiResponse.Fail(ex.Message));
+    }
+});
+
+app.MapDelete("/api/proposals/{id}", async (int id, IProposalService proposalService) =>
+{
+    try
+    {
+        await proposalService.DeleteProposalAsync(id);
+        return Results.Ok(ApiResponse.Ok($"Propuesta #{id} eliminada."));
+    }
+    catch (KeyNotFoundException ex)
+    {
+        return Results.NotFound(ApiResponse.Fail(ex.Message));
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Results.BadRequest(ApiResponse.Fail(ex.Message));
+    }
+});
+
+// AUXILIARES
 app.MapGet("/api/users", async (IGenericRepository<User> repo) =>
 {
     var usuarios = await repo.GetAllAsync();
@@ -265,7 +385,6 @@ app.MapGet("/api/users", async (IGenericRepository<User> repo) =>
     return Results.Ok(ApiResponse.Ok(seguros, "Usuarios obtenidos exitosamente."));
 });
 
-// Semilla — poblar con datos iniciales de prueba
 app.MapGet("/api/seed", async (
     IGenericRepository<User> repoUsuarios,
     IGenericRepository<FreelanceService> repoServicios,
@@ -284,7 +403,6 @@ app.MapGet("/api/seed", async (
         await repoUsuarios.AddAsync(cliente1);
         await repoUsuarios.AddAsync(cliente2);
 
-        // Servicios con módulos de ejemplo
         var s1 = new FreelanceService { Title = "Sistema ERP Empresarial", Description = "Sistema completo de gestión empresarial con módulos independientes adquiribles por separado.", BasePrice = 10500.00m, Category = "Sistema de Gestión (ERP)", FreelancerId = dev1.Id };
         var s2 = new FreelanceService { Title = "Sistema Web de Escaneo de Productos", Description = "Sistema web para supermercados con escaneo de productos, inventario y reportes.", BasePrice = 6000.00m, Category = "Sistema Web", FreelancerId = dev1.Id };
         var s3 = new FreelanceService { Title = "Aplicación Móvil Flutter", Description = "App móvil multiplataforma con módulos de autenticación, notificaciones y panel de control.", BasePrice = 7500.00m, Category = "Aplicación Móvil", FreelancerId = dev2.Id };
@@ -293,18 +411,13 @@ app.MapGet("/api/seed", async (
         await repoServicios.AddAsync(s2);
         await repoServicios.AddAsync(s3);
 
-        // Módulos del Sistema ERP
         await repoModulos.AddAsync(new Modulo { ServiceId = s1.Id, Nombre = "Gestión de Usuarios", Descripcion = "Administración de roles, permisos y accesos del sistema.", Precio = 1500.00m });
         await repoModulos.AddAsync(new Modulo { ServiceId = s1.Id, Nombre = "Gestión de Inventario", Descripcion = "Control de stock, entradas y salidas de productos.", Precio = 2500.00m });
         await repoModulos.AddAsync(new Modulo { ServiceId = s1.Id, Nombre = "Facturación", Descripcion = "Emisión de facturas, notas de crédito y reportes de ventas.", Precio = 2000.00m });
         await repoModulos.AddAsync(new Modulo { ServiceId = s1.Id, Nombre = "Reportes y Estadísticas", Descripcion = "Dashboards y reportes exportables en PDF/Excel.", Precio = 1800.00m });
-
-        // Módulos del Sistema de Escaneo
         await repoModulos.AddAsync(new Modulo { ServiceId = s2.Id, Nombre = "Escaneo de Productos", Descripcion = "Lectura de códigos de barra y QR para identificar productos.", Precio = 1800.00m });
         await repoModulos.AddAsync(new Modulo { ServiceId = s2.Id, Nombre = "Control de Stock", Descripcion = "Alertas de stock mínimo y reposición automática.", Precio = 1500.00m });
         await repoModulos.AddAsync(new Modulo { ServiceId = s2.Id, Nombre = "Punto de Venta", Descripcion = "Módulo de caja con cálculo de vuelto y cierre de caja.", Precio = 2000.00m });
-
-        // Módulos de la App Móvil
         await repoModulos.AddAsync(new Modulo { ServiceId = s3.Id, Nombre = "Autenticación", Descripcion = "Login, registro y recuperación de contraseña.", Precio = 1200.00m });
         await repoModulos.AddAsync(new Modulo { ServiceId = s3.Id, Nombre = "Panel de Control", Descripcion = "Dashboard con métricas y accesos rápidos.", Precio = 1800.00m });
         await repoModulos.AddAsync(new Modulo { ServiceId = s3.Id, Nombre = "Notificaciones Push", Descripcion = "Sistema de alertas y notificaciones en tiempo real.", Precio = 1500.00m });
@@ -314,7 +427,6 @@ app.MapGet("/api/seed", async (
     return Results.Ok(ApiResponse.Ok("La base de datos ya contiene datos."));
 });
 
-// Ruta de prueba del middleware de excepciones
 app.MapGet("/api/crash", () =>
 {
     throw new InvalidOperationException("Simulación: Error crítico de conexión a la base de datos.");
@@ -322,7 +434,8 @@ app.MapGet("/api/crash", () =>
 
 app.Run();
 
-// 10. CONFIGURACIÓN DE SERIALIZACIÓN JSON
+// Configuración de serialización JSON — case-insensitive para compatible con camelCase del frontend
+[JsonSourceGenerationOptions(PropertyNameCaseInsensitive = true)]
 [JsonSerializable(typeof(User))]
 [JsonSerializable(typeof(User[]))]
 [JsonSerializable(typeof(List<User>))]
@@ -349,6 +462,10 @@ app.Run();
 [JsonSerializable(typeof(ApiResponse<List<Modulo>>))]
 [JsonSerializable(typeof(ApiResponse<Proposal>))]
 [JsonSerializable(typeof(ApiResponse<IEnumerable<Proposal>>))]
+[JsonSerializable(typeof(Message))]
+[JsonSerializable(typeof(Message[]))]
+[JsonSerializable(typeof(List<Message>))]
+[JsonSerializable(typeof(IEnumerable<Message>))]
 [JsonSerializable(typeof(ApiResponse<object>))]
 [JsonSerializable(typeof(ApiResponse<string>))]
 internal partial class AppJsonSerializerContext : JsonSerializerContext

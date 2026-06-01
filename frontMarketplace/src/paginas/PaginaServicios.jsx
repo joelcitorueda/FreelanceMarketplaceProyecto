@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useAuth } from '../contexto/AuthContexto';
 import { useNotificacion } from '../componentes/Notificacion';
 import { api } from '../servicios/api';
-import { Tag, User, AlertCircle, Plus, X, Package, Trash2, ChevronDown, ChevronUp, Layers } from 'lucide-react';
+import { Tag, User, AlertCircle, Plus, X, Package, Trash2, ChevronDown, ChevronUp, Layers, Pencil } from 'lucide-react';
 
 export default function PaginaServicios() {
   const { usuario, esDesarrollador } = useAuth();
@@ -13,6 +13,7 @@ export default function PaginaServicios() {
   const [mostrarModal, setMostrarModal] = useState(false);
   const [formulario, setFormulario] = useState({ title: '', description: '', basePrice: '', category: '' });
   const [enviando, setEnviando] = useState(false);
+  const [editandoServicio, setEditandoServicio] = useState(null); // servicio que se está editando
 
   // Estados para gestión de módulos
   const [servicioConModulos, setServicioConModulos] = useState(null); // ID del servicio con módulos abierto
@@ -38,29 +39,80 @@ export default function PaginaServicios() {
   const manejarCambio = (e) => setFormulario({ ...formulario, [e.target.name]: e.target.value });
   const manejarCambioModulo = (e) => setFormModulo({ ...formModulo, [e.target.name]: e.target.value });
 
+  const cerrarModalServicio = () => {
+    setMostrarModal(false);
+    setEditandoServicio(null);
+    setFormulario({ title: '', description: '', basePrice: '', category: '' });
+  };
+
   const manejarPublicar = async (e) => {
     e.preventDefault();
     setEnviando(true);
     try {
-      const payload = {
-        title: formulario.title,
-        description: formulario.description,
-        basePrice: parseFloat(formulario.basePrice),
-        category: formulario.category,
-        freelancerId: usuario.id,
-      };
-      const res = await api.createService(payload);
-      if (res.success) {
-        notificar('¡Servicio publicado exitosamente!', 'success');
-        setMostrarModal(false);
-        setFormulario({ title: '', description: '', basePrice: '', category: '' });
-        cargarDatos();
+      if (editandoServicio) {
+        // Actualizar servicio existente
+        const payload = {
+          title: formulario.title,
+          description: formulario.description,
+          basePrice: parseFloat(formulario.basePrice),
+          category: formulario.category,
+          freelancerId: usuario.id,
+        };
+        const res = await api.updateService(editandoServicio.id, payload);
+        if (res.success) {
+          notificar('¡Servicio actualizado exitosamente!', 'success');
+          cerrarModalServicio();
+          cargarDatos();
+        } else {
+          notificar(res.message || 'Error al actualizar servicio', 'error');
+        }
       } else {
-        notificar(res.message || 'Error al publicar servicio', 'error');
+        // Crear nuevo servicio
+        const payload = {
+          title: formulario.title,
+          description: formulario.description,
+          basePrice: parseFloat(formulario.basePrice),
+          category: formulario.category,
+          freelancerId: usuario.id,
+        };
+        const res = await api.createService(payload);
+        if (res.success) {
+          notificar('¡Servicio publicado exitosamente!', 'success');
+          cerrarModalServicio();
+          cargarDatos();
+        } else {
+          notificar(res.message || 'Error al publicar servicio', 'error');
+        }
       }
     } catch {
       notificar('Error de conexión con el servidor', 'error');
     } finally { setEnviando(false); }
+  };
+
+  const abrirEdicionServicio = (servicio) => {
+    setEditandoServicio(servicio);
+    setFormulario({
+      title: servicio.title,
+      description: servicio.description,
+      basePrice: servicio.basePrice.toString(),
+      category: servicio.category,
+    });
+    setMostrarModal(true);
+  };
+
+  const manejarEliminarServicio = async (id, titulo) => {
+    if (!confirm(`¿Eliminar el servicio "${titulo}"? También se eliminarán todos sus módulos.`)) return;
+    try {
+      const res = await api.deleteService(id);
+      if (res.success) {
+        notificar(`Servicio "${titulo}" eliminado.`, 'info');
+        cargarDatos();
+      } else {
+        notificar(res.message || 'Error al eliminar servicio', 'error');
+      }
+    } catch {
+      notificar('Error de conexión con el servidor', 'error');
+    }
   };
 
   const abrirModalModulo = (serviceId) => {
@@ -172,6 +224,18 @@ export default function PaginaServicios() {
                   <span>{obtenerNombreDev(servicio.freelancerId)}</span>
                 </div>
 
+                {/* Botones de acción para el desarrollador dueño */}
+                {esMiServicio && (
+                  <div style={{ display: 'flex', gap: 8, marginBottom: '1rem' }}>
+                    <button className="btn btn-ghost btn-sm" onClick={() => abrirEdicionServicio(servicio)}>
+                      <Pencil size={13} /> Editar
+                    </button>
+                    <button className="btn btn-danger-outline btn-sm" onClick={() => manejarEliminarServicio(servicio.id, servicio.title)}>
+                      <Trash2 size={13} /> Eliminar
+                    </button>
+                  </div>
+                )}
+
                 {/* Sección de módulos */}
                 <div style={{ borderTop: '1px solid var(--border)', paddingTop: '0.75rem' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -248,13 +312,13 @@ export default function PaginaServicios() {
         </div>
       )}
 
-      {/* Modal para publicar nuevo servicio */}
+      {/* Modal para publicar o editar servicio */}
       {mostrarModal && (
-        <div className="modal-overlay" onClick={() => setMostrarModal(false)}>
+        <div className="modal-overlay" onClick={cerrarModalServicio}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h2>Publicar Nuevo Sistema</h2>
-              <button className="modal-close" onClick={() => setMostrarModal(false)}><X size={20} /></button>
+              <h2>{editandoServicio ? 'Editar Sistema' : 'Publicar Nuevo Sistema'}</h2>
+              <button className="modal-close" onClick={cerrarModalServicio}><X size={20} /></button>
             </div>
             <form onSubmit={manejarPublicar}>
               <div className="form-group">
@@ -290,13 +354,15 @@ export default function PaginaServicios() {
                   </select>
                 </div>
               </div>
-              <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '1rem' }}>
-                💡 Después de publicar podrás agregar los módulos de tu sistema para que los clientes compren solo lo que necesitan.
-              </p>
+              {!editandoServicio && (
+                <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '1rem' }}>
+                  💡 Después de publicar podrás agregar los módulos de tu sistema para que los clientes compren solo lo que necesitan.
+                </p>
+              )}
               <div className="modal-actions">
-                <button type="button" className="btn btn-ghost" onClick={() => setMostrarModal(false)}>Cancelar</button>
+                <button type="button" className="btn btn-ghost" onClick={cerrarModalServicio}>Cancelar</button>
                 <button type="submit" className="btn btn-primary" disabled={enviando}>
-                  {enviando ? 'Publicando...' : <><Plus size={16} /> Publicar Sistema</>}
+                  {enviando ? 'Guardando...' : editandoServicio ? <><Pencil size={16} /> Guardar Cambios</> : <><Plus size={16} /> Publicar Sistema</>}
                 </button>
               </div>
             </form>

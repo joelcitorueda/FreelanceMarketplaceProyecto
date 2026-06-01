@@ -15,9 +15,7 @@ namespace FreelanceMarketplace.Tests
         private const decimal COMISION_PREMIUM = 0.10m;      // 10% para montos altos
         private const decimal UMBRAL_PREMIUM_BS = 1000.00m; // Límite para tarifa premium
 
-        // =====================================================
         // TEST 1: Comisión estándar (15%) para propuestas menores a Bs 1000
-        // =====================================================
         [Fact]
         public void CalcularComision_MontoBajoUmbral_DebeAplicar15Porciento()
         {
@@ -33,9 +31,7 @@ namespace FreelanceMarketplace.Tests
             Assert.Equal(comisionEsperada, comisionCalculada);
         }
 
-        // =====================================================
         // TEST 2: Comisión premium (10%) para propuestas mayores a Bs 1000
-        // =====================================================
         [Fact]
         public void CalcularComision_MontoSobreUmbral_DebeAplicar10Porciento()
         {
@@ -51,9 +47,7 @@ namespace FreelanceMarketplace.Tests
             Assert.Equal(comisionEsperada, comisionCalculada);
         }
 
-        // =====================================================
         // TEST 3: Pago neto = Precio - Comisión
-        // =====================================================
         [Fact]
         public void CalcularPagoNeto_DebeSerPrecioMenosComision()
         {
@@ -69,9 +63,7 @@ namespace FreelanceMarketplace.Tests
             Assert.Equal(2700.00m, pagoNeto); // 3000 - 300 = 2700 Bs
         }
 
-        // =====================================================
         // TEST 4: Validar que precio cero lanza excepción
-        // =====================================================
         [Fact]
         public void ValidarPrecio_PrecioCero_DebeRetornarFalso()
         {
@@ -85,9 +77,7 @@ namespace FreelanceMarketplace.Tests
             Assert.False(esValido); // El precio debe ser mayor a Bs 0
         }
 
-        // =====================================================
         // TEST 5: Comisión exactamente en el umbral (Bs 1000 → usa tarifa premium)
-        // =====================================================
         [Fact]
         public void CalcularComision_MontoExactoEnUmbral_DebeAplicar10Porciento()
         {
@@ -103,9 +93,7 @@ namespace FreelanceMarketplace.Tests
             Assert.Equal(comisionEsperada, comisionCalculada);
         }
 
-        // =====================================================
         // TEST 6: Propuesta con módulos seleccionados calcula precio correcto
-        // =====================================================
         [Fact]
         public void PropuestaConModulos_PrecioDebeSerSumaDeModulos()
         {
@@ -121,9 +109,7 @@ namespace FreelanceMarketplace.Tests
             Assert.Equal(4000.00m, totalModulos); // 1500 + 2500 = 4000 Bs
         }
 
-        // =====================================================
         // TEST 7: Propuesta de sistema completo usa el precio base del servicio
-        // =====================================================
         [Fact]
         public void PropuestaSistemaCompleto_DebeUsarPrecioBase()
         {

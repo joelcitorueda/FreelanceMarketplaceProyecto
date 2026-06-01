@@ -19,6 +19,8 @@ export const api = {
   // Servicios
   getServices: () => peticion('/services'),
   createService: (servicio) => peticion('/services', { method: 'POST', body: JSON.stringify(servicio) }),
+  updateService: (id, servicio) => peticion(`/services/${id}`, { method: 'PUT', body: JSON.stringify(servicio) }),
+  deleteService: (id) => peticion(`/services/${id}`, { method: 'DELETE' }),
 
   // Módulos de servicios
   getModules: (serviceId) => peticion(`/services/${serviceId}/modules`),
@@ -31,6 +33,13 @@ export const api = {
   getProposalsByClient: (clientId) => peticion(`/proposals/client/${clientId}`),
   submitProposal: (propuesta) => peticion('/proposals', { method: 'POST', body: JSON.stringify(propuesta) }),
   acceptProposal: (id) => peticion(`/proposals/${id}/accept`, { method: 'POST' }),
+  rejectProposal: (id) => peticion(`/proposals/${id}/reject`, { method: 'POST' }),
+  updateProposal: (id, propuesta) => peticion(`/proposals/${id}`, { method: 'PUT', body: JSON.stringify(propuesta) }),
+  deleteProposal: (id) => peticion(`/proposals/${id}`, { method: 'DELETE' }),
+
+  // Mensajería / Conversaciones
+  getMessages: (proposalId) => peticion(`/proposals/${proposalId}/messages`),
+  sendMessage: (proposalId, mensaje) => peticion(`/proposals/${proposalId}/messages`, { method: 'POST', body: JSON.stringify(mensaje) }),
 
   // Utilidades
   seed: () => peticion('/seed'),
