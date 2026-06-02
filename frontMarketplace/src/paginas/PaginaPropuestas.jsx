@@ -3,25 +3,17 @@ import { useAuth } from '../contexto/AuthContexto';
 import { useNotificacion } from '../componentes/Notificacion';
 import { useMensajes } from '../contexto/MensajesContexto';
 import { api } from '../servicios/api';
-import {
-  Plus, Check, X, AlertCircle, Pencil, Trash2, XCircle,
-  MessageSquare, User, Briefcase, Package, Layers, CheckSquare, Square,
-  Send, MessageCircle, Bot, ChevronDown, ChevronUp
-} from 'lucide-react';
-
-const MAPA_ESTADOS = {
-  0: { etiqueta: 'Pendiente', cls: 'badge-pending' },
-  1: { etiqueta: 'Aceptada', cls: 'badge-accepted' },
-  2: { etiqueta: 'Rechazada', cls: 'badge-rejected' },
-  3: { etiqueta: 'Retirada', cls: 'badge-rejected' },
-};
+import { Plus, AlertCircle } from 'lucide-react';
+import TarjetaPropuesta from '../componentes/TarjetaPropuesta';
+import FormularioPropuesta from '../componentes/FormularioPropuesta';
+import PanelChat from '../componentes/PanelChat';
 
 const FORMULARIO_INICIAL = {
   serviceId: '',
   proposedPrice: '',
   message: '',
   esSistemaCompleto: true,
-  modulosSeleccionados: [], // array de objetos { id, nombre, precio }
+  modulosSeleccionados: [],
 };
 
 export default function PaginaPropuestas() {
@@ -32,26 +24,23 @@ export default function PaginaPropuestas() {
   const [usuarios, setUsuarios] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [mostrarModal, setMostrarModal] = useState(false);
-  const [editandoPropuesta, setEditandoPropuesta] = useState(null); // propuesta que se está editando
+  const [editandoPropuesta, setEditandoPropuesta] = useState(null);
   const [formulario, setFormulario] = useState(FORMULARIO_INICIAL);
   const [enviando, setEnviando] = useState(false);
 
-  // Módulos del servicio seleccionado actualmente
   const [modulosServicio, setModulosServicio] = useState([]);
   const [cargandoModulos, setCargandoModulos] = useState(false);
 
   const { incrementarNoLeidos, limpiarNoLeidos } = useMensajes();
 
-  // Estado para conversación/chat
-  const [chatAbierto, setChatAbierto] = useState(null); // proposalId del chat abierto
+  const [chatAbierto, setChatAbierto] = useState(null);
   const [mensajes, setMensajes] = useState([]);
   const [cargandoMensajes, setCargandoMensajes] = useState(false);
   const [nuevoMensaje, setNuevoMensaje] = useState('');
   const [enviandoMensaje, setEnviandoMensaje] = useState(false);
   const chatRef = useRef(null);
-  const ultimosMensajesCount = useRef({}); // { [proposalId]: cantidad } para detectar mensajes nuevos
+  const ultimosMensajesCount = useRef({});
 
-  // Auto-scroll al último mensaje
   useEffect(() => {
     if (chatRef.current) {
       chatRef.current.scrollTop = chatRef.current.scrollHeight;
@@ -79,7 +68,6 @@ export default function PaginaPropuestas() {
 
   const manejarCambio = (e) => setFormulario({ ...formulario, [e.target.name]: e.target.value });
 
-  // Cuando el cliente selecciona un servicio, carga sus módulos
   const manejarCambioServicio = async (e) => {
     const serviceId = e.target.value;
     setFormulario({
@@ -92,12 +80,10 @@ export default function PaginaPropuestas() {
     setModulosServicio([]);
 
     if (serviceId) {
-      // Buscar módulos ya cargados en el servicio
       const servicioSeleccionado = servicios.find(s => s.id === parseInt(serviceId));
       if (servicioSeleccionado?.modulos?.length > 0) {
         setModulosServicio(servicioSeleccionado.modulos);
       } else {
-        // Cargar desde la API si no están en el estado
         setCargandoModulos(true);
         try {
           const res = await api.getModules(serviceId);
@@ -118,7 +104,6 @@ export default function PaginaPropuestas() {
     return servicio ? servicio.basePrice : 0;
   };
 
-  // Toggle de módulo seleccionado
   const toggleModulo = (modulo) => {
     const yaSeleccionado = formulario.modulosSeleccionados.find(m => m.id === modulo.id);
     let nuevos;
@@ -156,7 +141,6 @@ export default function PaginaPropuestas() {
     try {
       const modulosIds = formulario.modulosSeleccionados.map(m => m.id).join(',');
       const modulosNombres = formulario.modulosSeleccionados.map(m => m.nombre).join(', ');
-
       const payload = {
         serviceId: parseInt(formulario.serviceId),
         freelancerId: obtenerDevDelServicio(formulario.serviceId),
@@ -168,13 +152,10 @@ export default function PaginaPropuestas() {
         modulosSeleccionadosIds: modulosIds,
         modulosSeleccionadosNombres: modulosNombres,
       };
-
       const res = await api.submitProposal(payload);
       if (res.success) {
         notificar('¡Propuesta enviada exitosamente!', 'success');
-        setMostrarModal(false);
-        setFormulario(FORMULARIO_INICIAL);
-        setModulosServicio([]);
+        cerrarModal();
         cargarDatos();
       } else {
         notificar(res.message || 'Error al enviar propuesta', 'error');
@@ -227,11 +208,9 @@ export default function PaginaPropuestas() {
     }
   };
 
-  // Funciones del chat
   const abrirChat = async (proposalId) => {
     setChatAbierto(proposalId);
     setCargandoMensajes(true);
-    // Al abrir el chat, limpiar las notificaciones de mensajes nuevos
     limpiarNoLeidos();
     ultimosMensajesCount.current[proposalId] = 0;
     try {
@@ -270,7 +249,6 @@ export default function PaginaPropuestas() {
     } finally { setEnviandoMensaje(false); }
   };
 
-  // Refrescar mensajes periódicamente cuando el chat está abierto
   useEffect(() => {
     if (chatAbierto === null) return;
     const intervalo = setInterval(async () => {
@@ -278,8 +256,6 @@ export default function PaginaPropuestas() {
         const res = await api.getMessages(chatAbierto);
         const mensajesNuevos = res.data || [];
         const countAnterior = ultimosMensajesCount.current[chatAbierto] || 0;
-
-        // Si hay mensajes nuevos, verificar si son de otro usuario
         if (mensajesNuevos.length > countAnterior) {
           const nuevos = mensajesNuevos.slice(countAnterior);
           const mensajesDeOtros = nuevos.filter(m => m.senderId !== usuario.id);
@@ -287,18 +263,16 @@ export default function PaginaPropuestas() {
             incrementarNoLeidos(mensajesDeOtros.length);
           }
         }
-
         setMensajes(mensajesNuevos);
         ultimosMensajesCount.current[chatAbierto] = mensajesNuevos.length;
       } catch { /* silent */ }
-    }, 5000); // Refrescar cada 5 segundos
+    }, 5000);
     return () => clearInterval(intervalo);
   }, [chatAbierto, usuario.id, incrementarNoLeidos]);
 
   const abrirEdicion = async (propuesta) => {
     setEditandoPropuesta(propuesta);
     let modulosData = [];
-    // Cargar módulos del servicio si los hay
     try {
       const res = await api.getModules(propuesta.serviceId);
       modulosData = res.data || [];
@@ -328,7 +302,6 @@ export default function PaginaPropuestas() {
     try {
       const modulosIds = formulario.modulosSeleccionados.map(m => m.id).join(',');
       const modulosNombres = formulario.modulosSeleccionados.map(m => m.nombre).join(', ');
-
       const payload = {
         serviceId: parseInt(formulario.serviceId),
         freelancerId: editandoPropuesta.freelancerId,
@@ -340,7 +313,6 @@ export default function PaginaPropuestas() {
         modulosSeleccionadosIds: modulosIds,
         modulosSeleccionadosNombres: modulosNombres,
       };
-
       const res = await api.updateProposal(editandoPropuesta.id, payload);
       if (res.success) {
         notificar('¡Propuesta actualizada exitosamente!', 'success');
@@ -403,336 +375,60 @@ export default function PaginaPropuestas() {
         </div>
       ) : (
         <div className="card-grid">
-          {propuestas.map((p) => {
-            const estado = MAPA_ESTADOS[p.status] || MAPA_ESTADOS[0];
-            return (
-              <div className="card" key={p.id}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
-                  <span style={{ fontWeight: 700, color: 'var(--text-muted)', fontSize: '0.8rem' }}>
-                    PROPUESTA #{p.id}
-                  </span>
-                  <span className={`badge ${estado.cls}`}>{estado.etiqueta}</span>
-                </div>
-
-                <h3 style={{ fontSize: '1rem', fontWeight: 700, marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <Briefcase size={16} /> {obtenerTituloServicio(p.serviceId)}
-                </h3>
-
-                {/* Badge de tipo de adquisición */}
-                <div style={{ marginBottom: '0.75rem' }}>
-                  {p.esSistemaCompleto ? (
-                    <span className="badge" style={{ background: 'rgba(99,102,241,0.15)', color: '#818cf8', fontSize: '0.72rem' }}>
-                      <Layers size={11} style={{ marginRight: 4 }} /> Sistema Completo
-                    </span>
-                  ) : (
-                    <span className="badge" style={{ background: 'rgba(16,185,129,0.15)', color: '#34d399', fontSize: '0.72rem' }}>
-                      <Package size={11} style={{ marginRight: 4 }} /> Módulos: {p.modulosSeleccionadosNombres || 'seleccionados'}
-                    </span>
-                  )}
-                </div>
-
-                {p.message && (
-                  <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '1rem', display: 'flex', gap: 6 }}>
-                    <MessageSquare size={14} style={{ flexShrink: 0, marginTop: 2 }} />
-                    {p.message}
-                  </p>
-                )}
-
-                <div className="proposal-meta">
-                  <div className="proposal-meta-item">
-                    <span>Precio propuesto</span>
-                    <span className="money money-large">Bs {p.proposedPrice.toFixed(2)}</span>
-                  </div>
-                  <div className="proposal-meta-item">
-                    <span>Comisión plataforma</span>
-                    <span style={{ color: 'var(--accent-warning)' }}>Bs {p.platformFee.toFixed(2)}</span>
-                  </div>
-                  <div className="proposal-meta-item">
-                    <span>Pago neto al dev</span>
-                    <span style={{ color: 'var(--accent-success)' }}>Bs {p.netPayout.toFixed(2)}</span>
-                  </div>
-                </div>
-
-                <div style={{
-                  display: 'flex', gap: '0.75rem', marginTop: '1rem', paddingTop: '1rem',
-                  borderTop: '1px solid var(--border-subtle)', fontSize: '0.8rem', color: 'var(--text-muted)'
-                }}>
-                  <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                    <User size={13} /> {esDesarrollador ? 'Cliente:' : 'Desarrollador:'} {obtenerNombreUsuario(esDesarrollador ? p.clientId : p.freelancerId)}
-                  </span>
-                </div>
-
-                {/* Acciones del desarrollador: Aceptar o Rechazar (solo pendientes) */}
-                {esDesarrollador && p.status === 0 && (
-                  <div style={{ display: 'flex', gap: 8, marginTop: '1rem' }}>
-                    <button className="btn btn-success btn-sm" onClick={() => manejarAceptar(p.id)}>
-                      <Check size={14} /> Aceptar Propuesta
-                    </button>
-                    <button className="btn btn-danger btn-sm" onClick={() => manejarRechazar(p.id)}>
-                      <XCircle size={14} /> Rechazar
-                    </button>
-                  </div>
-                )}
-
-                {/* Acciones del cliente: Editar o Eliminar (solo pendientes) */}
-                {esCliente && p.status === 0 && (
-                  <div style={{ display: 'flex', gap: 8, marginTop: '1rem' }}>
-                    <button className="btn btn-ghost btn-sm" onClick={() => abrirEdicion(p)}>
-                      <Pencil size={14} /> Editar
-                    </button>
-                    <button className="btn btn-danger-outline btn-sm" onClick={() => manejarEliminarPropuesta(p.id)}>
-                      <Trash2 size={14} /> Eliminar
-                    </button>
-                  </div>
-                )}
-
-                {/* Botón para abrir la conversación — visible para ambos roles y cualquier estado */}
-                <div style={{ marginTop: '0.75rem', paddingTop: '0.75rem', borderTop: '1px solid var(--border-subtle)' }}>
-                  <button
-                    className="btn btn-ghost btn-sm"
-                    onClick={() => abrirChat(p.id)}
-                    style={{ width: '100%', justifyContent: 'center' }}
-                  >
-                    <MessageCircle size={14} />{' '}
-                    {chatAbierto === p.id ? 'Cerrar conversación' : 'Ver conversación'}
-                  </button>
-                </div>
-              </div>
-            );
-          })}
+          {propuestas.map((p) => (
+            <TarjetaPropuesta
+              key={p.id}
+              propuesta={p}
+              esDesarrollador={esDesarrollador}
+              esCliente={esCliente}
+              chatAbierto={chatAbierto}
+              onAceptar={manejarAceptar}
+              onRechazar={manejarRechazar}
+              onEditar={abrirEdicion}
+              onEliminar={manejarEliminarPropuesta}
+              onAbrirChat={abrirChat}
+              obtenerNombreUsuario={obtenerNombreUsuario}
+              obtenerTituloServicio={obtenerTituloServicio}
+            />
+          ))}
         </div>
       )}
 
       {/* Panel de conversación / Chat */}
-      {chatAbierto !== null && (
-        <div className="modal-overlay" onClick={cerrarChat}>
-          <div className="chat-panel" onClick={(e) => e.stopPropagation()}>
-            <div className="chat-header">
-              <h3 style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <MessageCircle size={18} /> Conversación — Propuesta #{chatAbierto}
-              </h3>
-              <button className="modal-close" onClick={cerrarChat}><X size={20} /></button>
-            </div>
+      <PanelChat
+        ref={chatRef}
+        chatAbierto={chatAbierto}
+        mensajes={mensajes}
+        cargandoMensajes={cargandoMensajes}
+        nuevoMensaje={nuevoMensaje}
+        enviandoMensaje={enviandoMensaje}
+        usuario={usuario}
+        onCerrar={cerrarChat}
+        onChangeNuevoMensaje={(e) => setNuevoMensaje(e.target.value)}
+        onEnviarMensaje={manejarEnvioMensaje}
+      />
 
-            <div className="chat-messages" ref={chatRef}>
-              {cargandoMensajes ? (
-                <div className="loading-container" style={{ padding: '2rem 0' }}>
-                  <div className="spinner" />
-                  <p className="loading-text">Cargando mensajes...</p>
-                </div>
-              ) : mensajes.length === 0 ? (
-                <div className="empty-state" style={{ padding: '2rem 0' }}>
-                  <MessageCircle size={36} />
-                  <h3 style={{ fontSize: '0.95rem' }}>Sin mensajes aún</h3>
-                  <p style={{ fontSize: '0.8rem' }}>Envía el primer mensaje para iniciar la conversación.</p>
-                </div>
-              ) : (
-                mensajes.map((msg) => {
-                  const esMio = msg.senderId === usuario.id;
-                  const esSistema = msg.isSystemMessage;
-                  return (
-                    <div
-                      key={msg.id}
-                      className={`chat-bubble ${esSistema ? 'chat-system' : esMio ? 'chat-mine' : 'chat-theirs'}`}
-                    >
-                      {!esSistema && (
-                        <div className="chat-bubble-sender">
-                          <User size={12} /> {esMio ? 'Tú' : msg.senderRole === 'Freelancer' ? 'Desarrollador' : 'Cliente'}
-                        </div>
-                      )}
-                      <div className="chat-bubble-text">{msg.text}</div>
-                      <div className="chat-bubble-time">
-                        {new Date(msg.createdAt).toLocaleString('es-BO', {
-                          hour: '2-digit', minute: '2-digit',
-                          day: '2-digit', month: '2-digit'
-                        })}
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-
-            <form className="chat-input-area" onSubmit={manejarEnvioMensaje}>
-              <input
-                type="text"
-                value={nuevoMensaje}
-                onChange={(e) => setNuevoMensaje(e.target.value)}
-                className="chat-input"
-                placeholder="Escribe tu mensaje..."
-                disabled={enviandoMensaje}
-                autoFocus
-              />
-              <button
-                type="submit"
-                className="btn btn-primary btn-sm"
-                disabled={!nuevoMensaje.trim() || enviandoMensaje}
-                style={{ padding: '10px 16px' }}
-              >
-                {enviandoMensaje ? '...' : <Send size={16} />}
-              </button>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Modal para crear o editar propuesta (solo clientes) */}
-      {mostrarModal && (
-        <div className="modal-overlay" onClick={cerrarModal}>
-          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 600 }}>
-            <div className="modal-header">
-              <h2>{editandoPropuesta ? 'Editar Propuesta' : 'Nueva Propuesta'}</h2>
-              <button className="modal-close" onClick={cerrarModal}><X size={20} /></button>
-            </div>
-
-            <form onSubmit={editandoPropuesta ? manejarEnvioEdicion : manejarEnvio}>
-              {/* 1. Selección del servicio */}
-              <div className="form-group">
-                <label className="form-label">Selecciona el sistema</label>
-                <select name="serviceId" value={formulario.serviceId} onChange={manejarCambioServicio} className="form-select" required>
-                  <option value="">-- Elige un sistema --</option>
-                  {servicios.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.title} — Bs {s.basePrice.toFixed(2)} ({obtenerNombreUsuario(s.freelancerId)})
-                    </option>
-                  ))}
-                </select>
-                {formulario.serviceId && (
-                  <p style={{ marginTop: 6, fontSize: '0.8rem', color: 'var(--accent-primary-hover)' }}>
-                    📌 Desarrollador: <strong>{obtenerNombreUsuario(obtenerDevDelServicio(formulario.serviceId))}</strong>
-                  </p>
-                )}
-              </div>
-
-              {/* 2. Tipo de adquisición (solo si hay servicio seleccionado) */}
-              {formulario.serviceId && (
-                <div className="form-group">
-                  <label className="form-label">¿Qué deseas adquirir?</label>
-                  <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem' }}>
-                    <button
-                      type="button"
-                      onClick={() => cambiarTipoAdquisicion(true)}
-                      style={{
-                        flex: 1, padding: '0.75rem', borderRadius: 10, cursor: 'pointer', transition: 'all 0.2s',
-                        border: formulario.esSistemaCompleto ? '2px solid var(--primary)' : '2px solid var(--border)',
-                        background: formulario.esSistemaCompleto ? 'rgba(99,102,241,0.1)' : 'var(--surface)',
-                        color: formulario.esSistemaCompleto ? 'var(--primary)' : 'var(--text-secondary)',
-                      }}
-                    >
-                      <Layers size={20} style={{ marginBottom: 4 }} />
-                      <div style={{ fontWeight: 700, fontSize: '0.9rem' }}>Sistema Completo</div>
-                      <div style={{ fontSize: '0.75rem', marginTop: 2 }}>Bs {obtenerPrecioBase(formulario.serviceId).toFixed(2)}</div>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => cambiarTipoAdquisicion(false)}
-                      disabled={modulosServicio.length === 0 && !cargandoModulos}
-                      style={{
-                        flex: 1, padding: '0.75rem', borderRadius: 10, cursor: modulosServicio.length > 0 ? 'pointer' : 'not-allowed', transition: 'all 0.2s',
-                        border: !formulario.esSistemaCompleto ? '2px solid var(--success)' : '2px solid var(--border)',
-                        background: !formulario.esSistemaCompleto ? 'rgba(16,185,129,0.1)' : 'var(--surface)',
-                        color: !formulario.esSistemaCompleto ? 'var(--success)' : 'var(--text-secondary)',
-                        opacity: modulosServicio.length === 0 && !cargandoModulos ? 0.5 : 1,
-                      }}
-                    >
-                      <Package size={20} style={{ marginBottom: 4 }} />
-                      <div style={{ fontWeight: 700, fontSize: '0.9rem' }}>Módulos Individuales</div>
-                      <div style={{ fontSize: '0.75rem', marginTop: 2 }}>
-                        {cargandoModulos ? 'Cargando...' : modulosServicio.length > 0 ? `${modulosServicio.length} disponibles` : 'Sin módulos'}
-                      </div>
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* 3. Lista de módulos para seleccionar (cuando eligió módulos individuales) */}
-              {formulario.serviceId && !formulario.esSistemaCompleto && modulosServicio.length > 0 && (
-                <div className="form-group">
-                  <label className="form-label">Selecciona los módulos que necesitas</label>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.5rem' }}>
-                    {modulosServicio.map((mod) => {
-                      const seleccionado = formulario.modulosSeleccionados.find(m => m.id === mod.id);
-                      return (
-                        <div
-                          key={mod.id}
-                          onClick={() => toggleModulo(mod)}
-                          style={{
-                            display: 'flex', alignItems: 'center', gap: '0.75rem',
-                            padding: '0.65rem 0.85rem', borderRadius: 10, cursor: 'pointer',
-                            border: seleccionado ? '2px solid var(--success)' : '2px solid var(--border)',
-                            background: seleccionado ? 'rgba(16,185,129,0.08)' : 'var(--surface)',
-                            transition: 'all 0.15s',
-                          }}
-                        >
-                          {seleccionado ? (
-                            <CheckSquare size={18} color="var(--success)" />
-                          ) : (
-                            <Square size={18} color="var(--text-muted)" />
-                          )}
-                          <div style={{ flex: 1 }}>
-                            <div style={{ fontWeight: 600, fontSize: '0.85rem' }}>{mod.nombre}</div>
-                            {mod.descripcion && (
-                              <div style={{ fontSize: '0.73rem', color: 'var(--text-muted)' }}>{mod.descripcion}</div>
-                            )}
-                          </div>
-                          <span style={{ fontWeight: 700, color: 'var(--success)', fontSize: '0.9rem', whiteSpace: 'nowrap' }}>
-                            Bs {mod.precio.toFixed(2)}
-                          </span>
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  {/* Subtotal de módulos */}
-                  {formulario.modulosSeleccionados.length > 0 && (
-                    <div style={{
-                      marginTop: '0.75rem', padding: '0.65rem 0.85rem', borderRadius: 10,
-                      background: 'rgba(16,185,129,0.1)', border: '1px solid var(--success)',
-                      display: 'flex', justifyContent: 'space-between', alignItems: 'center'
-                    }}>
-                      <span style={{ fontWeight: 600, fontSize: '0.85rem' }}>
-                        {formulario.modulosSeleccionados.length} módulo(s) seleccionado(s)
-                      </span>
-                      <span style={{ fontWeight: 800, color: 'var(--success)', fontSize: '1rem' }}>
-                        Total: Bs {totalModulosSeleccionados.toFixed(2)}
-                      </span>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* 4. Precio propuesto */}
-              <div className="form-group">
-                <label className="form-label">Precio propuesto (Bs)</label>
-                <input type="number" name="proposedPrice" value={formulario.proposedPrice} onChange={manejarCambio}
-                  className="form-input" placeholder="0.00" step="0.01" min="1" required />
-                {formulario.serviceId && (
-                  <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 4 }}>
-                    {formulario.esSistemaCompleto
-                      ? `Precio del sistema completo: Bs ${obtenerPrecioBase(formulario.serviceId).toFixed(2)}. Puedes proponer un precio diferente.`
-                      : `Total módulos seleccionados: Bs ${totalModulosSeleccionados.toFixed(2)}. El precio se calcula automáticamente.`}
-                  </p>
-                )}
-              </div>
-
-              {/* 5. Mensaje */}
-              <div className="form-group">
-                <label className="form-label">Mensaje al desarrollador</label>
-                <textarea name="message" value={formulario.message} onChange={manejarCambio}
-                  className="form-textarea" placeholder="Describe lo que necesitas, plazos, requisitos específicos..." />
-              </div>
-
-              <div className="modal-actions">
-                <button type="button" className="btn btn-ghost" onClick={cerrarModal}>Cancelar</button>
-                <button type="submit" className="btn btn-primary" disabled={enviando}>
-                  {enviando ? 'Guardando...' : editandoPropuesta ? <><Pencil size={16} /> Guardar Cambios</> : <><Plus size={16} /> Enviar Propuesta</>}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      {/* Modal para crear o editar propuesta */}
+      <FormularioPropuesta
+        visible={mostrarModal}
+        editandoPropuesta={editandoPropuesta}
+        formulario={formulario}
+        modulosServicio={modulosServicio}
+        cargandoModulos={cargandoModulos}
+        servicios={servicios}
+        enviando={enviando}
+        totalModulosSeleccionados={totalModulosSeleccionados}
+        onCerrar={cerrarModal}
+        onChange={manejarCambio}
+        onChangeServicio={manejarCambioServicio}
+        onToggleModulo={toggleModulo}
+        onChangeTipoAdquisicion={cambiarTipoAdquisicion}
+        onEnviar={manejarEnvio}
+        onEnviarEdicion={manejarEnvioEdicion}
+        obtenerNombreUsuario={obtenerNombreUsuario}
+        obtenerPrecioBase={obtenerPrecioBase}
+        obtenerDevDelServicio={obtenerDevDelServicio}
+      />
     </>
   );
 }
